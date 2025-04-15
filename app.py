@@ -10,16 +10,24 @@ if 'nlp' not in st.session_state:
     st.session_state['nlp'] = None
 
 # Load spaCy model
-@st.cache_resource(show_spinner=False)
+@st.cache_resource(show_spinner=True)
 def load_model():
     try:
-        # First try to load the model
-        return spacy.load("en_core_web_sm")
-    except OSError:
+        # Try importing directly first
+        import en_core_web_sm
+        return en_core_web_sm.load()
+    except ImportError:
         try:
-            # If not found, try to download it
-            spacy.cli.download("en_core_web_sm")
+            # If import fails, try loading by name
             return spacy.load("en_core_web_sm")
+        except OSError:
+            try:
+                # If loading fails, try downloading
+                spacy.cli.download("en_core_web_sm")
+                return spacy.load("en_core_web_sm")
+            except Exception as e:
+                st.error(f"Error loading language model: {str(e)}")
+                return None
         except Exception as e:
             st.error(f"Error loading spaCy model: {str(e)}")
             return None

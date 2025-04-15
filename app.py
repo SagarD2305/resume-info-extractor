@@ -2,17 +2,27 @@ import streamlit as st
 import PyPDF2
 import spacy
 import re
+import os
 from io import BytesIO
 
+# Initialize session state
+if 'nlp' not in st.session_state:
+    st.session_state['nlp'] = None
+
 # Load spaCy model
-@st.cache_resource
+@st.cache_resource(show_spinner=False)
 def load_model():
     try:
+        # First try to load the model
         return spacy.load("en_core_web_sm")
     except OSError:
-        # Download the model if it's not installed
-        spacy.cli.download("en_core_web_sm")
-        return spacy.load("en_core_web_sm")
+        try:
+            # If not found, try to download it
+            spacy.cli.download("en_core_web_sm")
+            return spacy.load("en_core_web_sm")
+        except Exception as e:
+            st.error(f"Error loading spaCy model: {str(e)}")
+            return None
 
 def extract_text_from_pdf(pdf_file):
     pdf_reader = PyPDF2.PdfReader(pdf_file)
@@ -159,12 +169,28 @@ def extract_work_experience(text):
     return experience_sections
 
 def main():
+    # Configure the page
     try:
-        st.set_page_config(page_title="Resume Information Extractor", layout="wide")
-    except:
-        pass  # Ignore if already set
-    st.title("Resume Information Extractor")
+        st.set_page_config(
+            page_title="Resume Information Extractor",
+            page_icon="📄",
+            layout="wide",
+            initial_sidebar_state="expanded"
+        )
+    except Exception as e:
+        st.write(f"Note: {str(e)}")
+    
+    # Set up the main page
+    st.title("📄 Resume Information Extractor")
     st.write("Upload a resume PDF to extract key information")
+    
+    # Load the NLP model if not already loaded
+    if st.session_state['nlp'] is None:
+        with st.spinner('Loading language model...'):
+            st.session_state['nlp'] = load_model()
+            if st.session_state['nlp'] is None:
+                st.error("Failed to load the language model. Please try refreshing the page.")
+                return
     
     # Comprehensive skills list
     common_skills = [
@@ -203,8 +229,15 @@ def main():
             text = extract_text_from_pdf(pdf_bytes)
             
             # Process with spaCy
-            nlp = load_model()
-            doc = nlp(text)
+            if st.session_state['nlp'] is None:
+                st.error("Language model not loaded. Please refresh the page.")
+                return
+            
+            try:
+                doc = st.session_state['nlp'](text)
+            except Exception as e:
+                st.error(f"Error processing text: {str(e)}")
+                return
             
             # Extract information
             name = extract_name(nlp, doc, text)

@@ -7,7 +7,12 @@ from io import BytesIO
 # Load spaCy model
 @st.cache_resource
 def load_model():
-    return spacy.load("en_core_web_sm")
+    try:
+        return spacy.load("en_core_web_sm")
+    except OSError:
+        # Download the model if it's not installed
+        spacy.cli.download("en_core_web_sm")
+        return spacy.load("en_core_web_sm")
 
 def extract_text_from_pdf(pdf_file):
     pdf_reader = PyPDF2.PdfReader(pdf_file)
@@ -154,7 +159,10 @@ def extract_work_experience(text):
     return experience_sections
 
 def main():
-    st.set_page_config(page_title="Resume Information Extractor", layout="wide")
+    try:
+        st.set_page_config(page_title="Resume Information Extractor", layout="wide")
+    except:
+        pass  # Ignore if already set
     st.title("Resume Information Extractor")
     st.write("Upload a resume PDF to extract key information")
     

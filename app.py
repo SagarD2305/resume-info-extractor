@@ -178,7 +178,8 @@ def main():
             initial_sidebar_state="expanded"
         )
     except Exception as e:
-        st.write(f"Note: {str(e)}")
+        if "StreamlitAPIException" not in str(e):
+            st.write(f"Note: {str(e)}")
     
     # Set up the main page
     st.title("📄 Resume Information Extractor")
@@ -322,4 +323,8 @@ Work Experience:
             )
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except Exception as e:
+        st.error(f"Application error: {str(e)}")
+        st.error("If this error persists, please refresh the page or contact support.")

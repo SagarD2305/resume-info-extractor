@@ -1,0 +1,10 @@
+[server]
+port = 49152
+address = "localhost"
+headless = true
+enableCORS = false
+enableXsrfProtection = false
+
+[browser]
+serverPort = 49152
+gatherUsageStats = false

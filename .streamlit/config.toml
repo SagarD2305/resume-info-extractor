@@ -3,19 +3,7 @@ port = 8501
 address = "0.0.0.0"
 enableCORS = true
 enableXsrfProtection = false
-
-[browser]
-serverAddress = "0.0.0.0"
-serverPort = 8501
-
-[global]
-developmentMode = false
-
-[theme]
-base="light"
 headless = true
-enableCORS = false
-enableXsrfProtection = false
 
 [browser]
 serverPort = 49152

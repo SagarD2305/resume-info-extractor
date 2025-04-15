@@ -9,28 +9,21 @@ from io import BytesIO
 if 'nlp' not in st.session_state:
     st.session_state['nlp'] = None
 
-# Load spaCy model
+# Load spaCy model with fallback
 @st.cache_resource(show_spinner=True)
 def load_model():
     try:
-        # Try importing directly first
-        import en_core_web_sm
-        return en_core_web_sm.load()
-    except ImportError:
-        try:
-            # If import fails, try loading by name
-            return spacy.load("en_core_web_sm")
-        except OSError:
-            try:
-                # If loading fails, try downloading
-                spacy.cli.download("en_core_web_sm")
-                return spacy.load("en_core_web_sm")
-            except Exception as e:
-                st.error(f"Error loading language model: {str(e)}")
-                return None
-        except Exception as e:
-            st.error(f"Error loading spaCy model: {str(e)}")
-            return None
+        return spacy.load("en_core_web_sm")
+    except Exception as e:
+        st.warning("Using basic NLP features as spaCy model could not be loaded")
+        return None
+
+# Fallback name extraction without spaCy
+def extract_name_fallback(text):
+    lines = [line.strip() for line in text.split('\n') if line.strip()]
+    if lines:
+        return lines[0]  # Usually name is in the first line
+    return ""
 
 def extract_text_from_pdf(pdf_file):
     pdf_reader = PyPDF2.PdfReader(pdf_file)
@@ -90,25 +83,33 @@ def extract_phone(text):
     return ""
 
 def extract_name(nlp, doc, text):
-    # Get all non-empty lines
+    if nlp is None:
+        return extract_name_fallback(text)
+        
     lines = [line.strip() for line in text.split('\n') if line.strip()]
-    
-    # Look at line 5 specifically for the name
     if len(lines) >= 5:
         name_line = lines[4]  # 5th line (0-based index)
-        # Clean up the name line
-        name = name_line.strip()
-        # Remove any prefix like 'Name:' if present
-        if ':' in name:
-            name = name.split(':', 1)[1].strip()
-        return name
+        
+        # Remove common prefixes if present
+        name_line = re.sub(r'^[Nn]ame\s*:?\s*', '', name_line)
+        
+        # Try to find name using spaCy's NER
+        doc = nlp(name_line)
+        for ent in doc.ents:
+            if ent.label_ == "PERSON":
+                return ent.text
+        
+        # If no PERSON entity found, return the cleaned line
+        return name_line.strip()
     
-    # Fallback: try spaCy name detection
+    # Fallback: try to find any PERSON entity in the first few lines
+    first_page = '\n'.join(lines[:10])
+    doc = nlp(first_page)
     for ent in doc.ents:
         if ent.label_ == "PERSON":
             return ent.text
     
-    return ""
+    return extract_name_fallback(text)
 
 def extract_skills(text, common_skills):
     found_skills = set()
@@ -237,16 +238,9 @@ def main():
             pdf_bytes = BytesIO(uploaded_file.read())
             text = extract_text_from_pdf(pdf_bytes)
             
-            # Process with spaCy
-            if st.session_state['nlp'] is None:
-                st.error("Language model not loaded. Please refresh the page.")
-                return
-            
-            try:
-                doc = st.session_state['nlp'](text)
-            except Exception as e:
-                st.error(f"Error processing text: {str(e)}")
-                return
+            # Process with spaCy if available
+            nlp = st.session_state['nlp']
+            doc = nlp(text) if nlp else None
             
             # Extract information
             name = extract_name(nlp, doc, text)

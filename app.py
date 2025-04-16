@@ -1,29 +1,20 @@
 import streamlit as st
 import PyPDF2
-import spacy
 import re
-import os
 from io import BytesIO
 
-# Initialize session state
-if 'nlp' not in st.session_state:
-    st.session_state['nlp'] = None
-
-# Load spaCy model with fallback
-@st.cache_resource(show_spinner=True)
-def load_model():
-    try:
-        return spacy.load("en_core_web_sm")
-    except Exception as e:
-        st.warning("Using basic NLP features as spaCy model could not be loaded")
-        return None
-
-# Fallback name extraction without spaCy
-def extract_name_fallback(text):
+def extract_name(text):
     lines = [line.strip() for line in text.split('\n') if line.strip()]
-    if lines:
-        return lines[0]  # Usually name is in the first line
-    return ""
+    if not lines:
+        return ""
+    
+    # First try to find a line that starts with 'Name:'
+    for line in lines[:5]:  # Check first 5 lines
+        if re.match(r'^[Nn]ame\s*:', line):
+            return re.sub(r'^[Nn]ame\s*:\s*', '', line).strip()
+    
+    # If no explicit name line found, return first non-empty line
+    return lines[0]
 
 def extract_text_from_pdf(pdf_file):
     pdf_reader = PyPDF2.PdfReader(pdf_file)
@@ -32,39 +23,34 @@ def extract_text_from_pdf(pdf_file):
         text += page.extract_text()
     return text
 
-def extract_email(text):
-    # Get all non-empty lines
+def extract_phone(text):
+    # Common phone patterns
+    phone_patterns = [
+        r'\b\d{3}[-.]?\d{3}[-.]?\d{4}\b',  # 1234567890, 123-456-7890
+        r'\(\d{3}\)[-.]?\d{3}[-.]?\d{4}',   # (123)456-7890
+        r'\+\d{1,2}[-.]?\d{3}[-.]?\d{3}[-.]?\d{4}'  # +1-123-456-7890
+    ]
+    
     lines = [line.strip() for line in text.split('\n') if line.strip()]
     
-    # Look at line 2 specifically for the email
-    if len(lines) >= 2:
-        email_line = lines[1]  # 2nd line (0-based index)
-        
-        # Replace non-breaking spaces with regular spaces
-        email_line = email_line.replace('\xa0', ' ')
-        
-        # If line starts with 'Email :' or similar, remove that prefix
-        if 'email' in email_line.lower():
-            # Split on ':' and take everything after it
-            parts = email_line.split(':', 1)
-            if len(parts) > 1:
-                email_line = parts[1]
-        
-        # Clean up the email: remove spaces, convert to lowercase
-        email_line = ''.join(email_line.split())  # Remove all whitespace
-        email_line = email_line.lower()  # Convert to lowercase
-        
-        # Simple email pattern
-        email_pattern = r'[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}'
-        match = re.search(email_pattern, email_line)
-        if match:
-            return match.group(0)
+    # First try to find a line that starts with 'Phone:'
+    for line in lines[:10]:
+        if re.match(r'^[Pp]hone\s*:', line):
+            phone_line = re.sub(r'^[Pp]hone\s*:\s*', '', line)
+            # Try each pattern
+            for pattern in phone_patterns:
+                match = re.search(pattern, phone_line)
+                if match:
+                    return match.group(0)
     
-    # Fallback: try to find any email in the text
-    email_pattern = r'[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}'
-    match = re.search(email_pattern, text)
-    if match:
-        return match.group(0).lower()
+    # Fallback: look for phone pattern in first few lines
+    for line in lines[:10]:
+        for pattern in phone_patterns:
+            match = re.search(pattern, line)
+            if match:
+                return match.group(0)
+    
+    return ""
     
     return ""
 
@@ -82,34 +68,26 @@ def extract_phone(text):
             return phones[0]
     return ""
 
-def extract_name(nlp, doc, text):
-    if nlp is None:
-        return extract_name_fallback(text)
-        
+def extract_email(text):
+    # Get all non-empty lines
     lines = [line.strip() for line in text.split('\n') if line.strip()]
-    if len(lines) >= 5:
-        name_line = lines[4]  # 5th line (0-based index)
-        
-        # Remove common prefixes if present
-        name_line = re.sub(r'^[Nn]ame\s*:?\s*', '', name_line)
-        
-        # Try to find name using spaCy's NER
-        doc = nlp(name_line)
-        for ent in doc.ents:
-            if ent.label_ == "PERSON":
-                return ent.text
-        
-        # If no PERSON entity found, return the cleaned line
-        return name_line.strip()
     
-    # Fallback: try to find any PERSON entity in the first few lines
-    first_page = '\n'.join(lines[:10])
-    doc = nlp(first_page)
-    for ent in doc.ents:
-        if ent.label_ == "PERSON":
-            return ent.text
+    # First try to find a line that starts with 'Email:'
+    for line in lines[:10]:  # Check first 10 lines
+        if re.match(r'^[Ee]mail\s*:', line):
+            email_line = re.sub(r'^[Ee]mail\s*:\s*', '', line)
+            email_line = email_line.lower().strip()
+            if '@' in email_line:
+                return email_line
     
-    return extract_name_fallback(text)
+    # Fallback: look for email pattern in first few lines
+    email_pattern = r'[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}'
+    for line in lines[:10]:
+        match = re.search(email_pattern, line.lower())
+        if match:
+            return match.group(0)
+    
+    return ""
 
 def extract_skills(text, common_skills):
     found_skills = set()
@@ -118,67 +96,72 @@ def extract_skills(text, common_skills):
     # Find skills section
     skills_section = ""
     sections = text_lower.split('\n\n')
-    for i, section in enumerate(sections):
-        if any(keyword in section.lower() for keyword in ['skills', 'technical skills', 'core competencies']):
-            # Include this section and the next one
-            skills_section = '\n'.join(sections[i:i+2])
-            break
-    
-    # If no skills section found, search entire text
-    search_text = skills_section if skills_section else text_lower
-    
-    # Look for skills
     for skill in common_skills:
-        skill_lower = skill.lower()
-        if skill_lower in search_text:
+        # Create a pattern that matches the skill as a whole word
+        pattern = r'\b' + re.escape(skill.lower()) + r'\b'
+        if re.search(pattern, text_lower):
             found_skills.add(skill)
     
     return sorted(list(found_skills))
 
 def extract_work_experience(text):
     experience_sections = []
+    lines = text.split('\n')
     
-    # Common section headers
-    section_headers = [
+    # Keywords that might indicate the start of work experience section
+    experience_headers = [
         'work experience',
         'professional experience',
         'employment history',
-        'work history',
-        'experience'
+        'work history'
     ]
     
-    # Split text into sections
-    lines = text.split('\n')
-    current_section = []
-    in_experience_section = False
+    # Keywords that might indicate the start of a new section
+    other_sections = [
+        'education',
+        'skills',
+        'certifications',
+        'awards',
+        'projects',
+        'languages',
+        'interests',
+        'references'
+    ]
     
-    for i, line in enumerate(lines):
+    in_experience_section = False
+    current_section = []
+    
+    for line in lines:
         line = line.strip()
+        if not line:  # Skip empty lines
+            continue
+        
         line_lower = line.lower()
         
-        # Check if this line is a section header
-        if any(header in line_lower for header in section_headers):
+        # Check if we've found the start of work experience section
+        if any(header in line_lower for header in experience_headers):
             in_experience_section = True
             continue
         
-        # Check if we've hit the next major section
-        if line and len(line) < 50 and line.isupper() and i > 0:
-            if in_experience_section:
-                if current_section:
-                    experience_sections.append('\n'.join(current_section))
-                break
+        # Check if we've reached a different section
+        if any(section in line_lower for section in other_sections):
+            if in_experience_section and current_section:
+                experience_sections.append('\n'.join(current_section))
+                current_section = []
+            in_experience_section = False
+            continue
         
-        if in_experience_section and line:
+        # If we're in the experience section, add the line
+        if in_experience_section:
             current_section.append(line)
     
-    # Add the last section if we're still in experience
+    # Add the last section if we were still in experience
     if in_experience_section and current_section:
         experience_sections.append('\n'.join(current_section))
     
     return experience_sections
 
 def main():
-    # Configure the page
     try:
         st.set_page_config(
             page_title="Resume Information Extractor",
@@ -187,20 +170,11 @@ def main():
             initial_sidebar_state="expanded"
         )
     except Exception as e:
-        if "StreamlitAPIException" not in str(e):
-            st.write(f"Note: {str(e)}")
+        st.write(f"Note: {str(e)}")
     
     # Set up the main page
     st.title("📄 Resume Information Extractor")
     st.write("Upload a resume PDF to extract key information")
-    
-    # Load the NLP model if not already loaded
-    if st.session_state['nlp'] is None:
-        with st.spinner('Loading language model...'):
-            st.session_state['nlp'] = load_model()
-            if st.session_state['nlp'] is None:
-                st.error("Failed to load the language model. Please try refreshing the page.")
-                return
     
     # Comprehensive skills list
     common_skills = [
@@ -238,12 +212,8 @@ def main():
             pdf_bytes = BytesIO(uploaded_file.read())
             text = extract_text_from_pdf(pdf_bytes)
             
-            # Process with spaCy if available
-            nlp = st.session_state['nlp']
-            doc = nlp(text) if nlp else None
-            
             # Extract information
-            name = extract_name(nlp, doc, text)
+            name = extract_name(text)
             email = extract_email(text)
             phone = extract_phone(text)
             skills = extract_skills(text, common_skills)
